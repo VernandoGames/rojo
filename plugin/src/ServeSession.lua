@@ -1,9 +1,11 @@
 local StudioService = game:GetService("StudioService")
+local RunService = game:GetService("RunService")
 
 local Log = require(script.Parent.Parent.Log)
 local Fmt = require(script.Parent.Parent.Fmt)
 local t = require(script.Parent.Parent.t)
 
+local ChangeBatcher = require(script.Parent.ChangeBatcher)
 local InstanceMap = require(script.Parent.InstanceMap)
 local PatchSet = require(script.Parent.PatchSet)
 local Promise = require(script.Parent.Parent.Promise)
@@ -57,10 +59,19 @@ function ServeSession.new(options)
 	-- Declare self ahead of time to capture it in a closure
 	local self
 	local function onInstanceChanged(instance, propertyName)
-		self:__onInstanceChanged(instance, propertyName)
+		if not self.__twoWaySync then
+			return
+		end
+
+		self.__changeBatcher:add(instance, propertyName)
+	end
+
+	local function onChangesFlushed(patch)
+		self.__apiContext:write(patch)
 	end
 
 	local instanceMap = InstanceMap.new(onInstanceChanged)
+	local changeBatcher = ChangeBatcher.new(instanceMap, onChangesFlushed)
 	local reconciler = Reconciler.new(instanceMap)
 
 	local connections = {}
@@ -83,6 +94,7 @@ function ServeSession.new(options)
 		__twoWaySync = options.twoWaySync,
 		__reconciler = reconciler,
 		__instanceMap = instanceMap,
+		__changeBatcher = changeBatcher,
 		__statusChangedCallback = nil,
 		__connections = connections,
 	}
@@ -113,6 +125,7 @@ function ServeSession:start()
 	self.__apiContext:connect()
 		:andThen(function(serverInfo)
 			self:__setStatus(Status.Connected, serverInfo.projectName)
+			self:__applyGameAndPlaceId(serverInfo)
 
 			local rootInstanceId = serverInfo.rootInstanceId
 
@@ -128,6 +141,16 @@ end
 
 function ServeSession:stop()
 	self:__stopInternal()
+end
+
+function ServeSession:__applyGameAndPlaceId(serverInfo)
+	if serverInfo.gameId ~= nil then
+		game:SetUniverseId(serverInfo.gameId)
+	end
+
+	if serverInfo.placeId ~= nil then
+		game:SetPlaceId(serverInfo.placeId)
+	end
 end
 
 function ServeSession:__onActiveScriptChanged(activeScript)
@@ -152,62 +175,21 @@ function ServeSession:__onActiveScriptChanged(activeScript)
 
 	Log.debug("Trying to open script {} externally...", activeScript)
 
-	-- Force-close the script inside Studio
-	local existingParent = activeScript.Parent
-	activeScript.Parent = nil
-	activeScript.Parent = existingParent
+	-- Force-close the script inside Studio... with a small delay in the middle
+	-- to prevent Studio from crashing.
+	spawn(function()
+		local existingParent = activeScript.Parent
+		activeScript.Parent = nil
+
+		for i = 1, 3 do
+			RunService.Heartbeat:Wait()
+		end
+
+		activeScript.Parent = existingParent
+	end)
 
 	-- Notify the Rojo server to open this script
 	self.__apiContext:open(scriptId)
-end
-
-function ServeSession:__onInstanceChanged(instance, propertyName)
-	if not self.__twoWaySync then
-		return
-	end
-
-	local instanceId = self.__instanceMap.fromInstances[instance]
-
-	if instanceId == nil then
-		Log.warn("Ignoring change for instance {:?} as it is unknown to Rojo", instance)
-		return
-	end
-
-	local remove = nil
-
-	local update = {
-		id = instanceId,
-		changedProperties = {},
-	}
-
-	if propertyName == "Name" then
-		update.changedName = instance.Name
-	elseif propertyName == "Parent" then
-		if instance.Parent == nil then
-			update = nil
-			remove = instanceId
-		else
-			Log.warn("Cannot sync non-nil Parent property changes yet")
-			return
-		end
-	else
-		local success, encoded = self.__reconciler:encodeApiValue(instance[propertyName])
-
-		if not success then
-			Log.warn("Could not sync back property {:?}.{}", instance, propertyName)
-			return
-		end
-
-		update.changedProperties[propertyName] = encoded
-	end
-
-	local patch = {
-		removed = {remove},
-		added = {},
-		updated = {update},
-	}
-
-	self.__apiContext:write(patch)
 end
 
 function ServeSession:__initialSync(rootInstanceId)
@@ -288,6 +270,7 @@ function ServeSession:__stopInternal(err)
 	self:__setStatus(Status.Disconnected, err)
 	self.__apiContext:disconnect()
 	self.__instanceMap:stop()
+	self.__changeBatcher:stop()
 
 	for _, connection in ipairs(self.__connections) do
 		connection:Disconnect()

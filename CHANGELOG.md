@@ -1,6 +1,109 @@
 # Rojo Changelog
 
 ## Unreleased Changes
+* Fixed Rojo's interactions with properties enabled by FFlags that are not yet enabled. ([#493])
+* Improved output in Roblox Studio plugin when bad property data is encountered.
+* Reintroduced support for CFrame shorthand syntax in Rojo project and `.meta.json` files, matching Rojo 6. ([#430])
+* Connection settings are now remembered when reconnecting in Roblox Studio. ([#500])
+* Updated reflection database to Roblox v503.
+
+[#430]: https://github.com/rojo-rbx/rojo/issues/430
+[#493]: https://github.com/rojo-rbx/rojo/pull/493
+[#500]: https://github.com/rojo-rbx/rojo/pull/500
+
+## [7.0.0-rc.3] - October 19, 2021
+This is the last release candidate for Rojo 7. In an effort to get Rojo 7 out the door, we'll be freezing features from here on out, something we should've done a couple months ago.
+
+Expect to see Rojo 7 stable soon!
+
+* Added support for writing `Tags` in project files, model files, and meta files. ([#484])
+* Adjusted Studio plugin colors to match Roblox Studio palette. ([#482])
+* Improved experimental two-way sync feature by batching changes. ([#478])
+
+[#482]: https://github.com/rojo-rbx/rojo/pull/482
+[#484]: https://github.com/rojo-rbx/rojo/pull/484
+[#478]: https://github.com/rojo-rbx/rojo/pull/478
+[7.0.0-rc.3]: https://github.com/rojo-rbx/rojo/releases/tag/v7.0.0-rc.3
+
+## 7.0.0-rc.2 - October 19, 2021
+(Botched release due to Git mishap, oops!)
+
+## [7.0.0-rc.1] - August 23, 2021
+In Rojo 6 and previous Rojo 7 alphas, an explicit Vector3 property would be written like this:
+
+```json
+{
+    "className": "Part",
+    "properties": {
+        "Position": {
+            "Type": "Vector3",
+            "Value": [1, 2, 3]
+        }
+    }
+}
+```
+
+For Rojo 7, this will need to be changed to:
+
+```json
+{
+    "className": "Part",
+    "properties": {
+        "Position": {
+            "Vector3": [1, 2, 3]
+        }
+    }
+}
+```
+
+The shorthand property format that most users use is not impacted. For reference, it looks like this:
+
+```json
+{
+    "className": "Part",
+    "properties": {
+        "Position": [1, 2, 3]
+    }
+}
+```
+
+* Major breaking change: changed property syntax for project files; shorthand syntax is unchanged.
+* Added the `fmt-project` subcommand for formatting Rojo project files.
+* Improved error output for many subcommands.
+* Updated to stable versions of rbx-dom libraries.
+* Updated async infrastructure, which should fix a handful of bugs. ([#459])
+* Fixed syncing refs in the Roblox Studio plugin ([#462], [#466])
+* Added support for long paths on Windows. ([#464])
+
+[#459]: https://github.com/rojo-rbx/rojo/pull/459
+[#462]: https://github.com/rojo-rbx/rojo/pull/462
+[#464]: https://github.com/rojo-rbx/rojo/pull/464
+[#466]: https://github.com/rojo-rbx/rojo/pull/466
+[7.0.0-rc.1]: https://github.com/rojo-rbx/rojo/releases/tag/v7.0.0-rc.1
+
+## [7.0.0-alpha.4][7.0.0-alpha.4] (May 5, 2021)
+* Added the `gameId` and `placeId` optional properties to project files.
+    * When connecting from the Rojo Roblox Studio plugin, Rojo will set the game and place ID of the current place to these values, if set.
+    * This is equivalent to running `game:SetUniverseId(...)` and `game:SetPlaceId(...)` from the command bar in Studio. 
+* Added "EXPERIMENTAL!" label to two-way sync toggle in Rojo's Roblox Studio plugin.
+* Fixed `Name` and `Parent` properties being allowed in Rojo projects. ([#413][pr-413])
+* Fixed "Open Scripts Externally" feature crashing Studio. ([#369][issue-369])
+* Empty `.model.json` files will no longer cause errors. ([#420][pr-420])
+* When specifying `$path` on a service, Rojo now keeps the correct class name. ([#331][issue-331])
+* Improved error messages for misconfigured projects.
+
+[issue-331]: https://github.com/rojo-rbx/rojo/issues/331
+[issue-369]: https://github.com/rojo-rbx/rojo/issues/369
+[pr-420]: https://github.com/rojo-rbx/rojo/pull/420
+[pr-413]: https://github.com/rojo-rbx/rojo/pull/413
+[7.0.0-alpha.4]: https://github.com/rojo-rbx/rojo/releases/tag/v7.0.0-alpha.4
+
+## [7.0.0-alpha.3][7.0.0-alpha.3] (February 19, 2021)
+* Updated dependencies, fixing `OptionalCoordinateFrame`-related issues.
+* Added `--address` flag to `rojo serve` to allow for external connections. ([#403][pr-403])
+
+[pr-403]: https://github.com/rojo-rbx/rojo/pull/403
+[7.0.0-alpha.3]: https://github.com/rojo-rbx/rojo/releases/tag/v7.0.0-alpha.3
 
 ## [7.0.0-alpha.2][7.0.0-alpha.2] (February 19, 2021)
 * Fixed incorrect protocol version between the client and server.
