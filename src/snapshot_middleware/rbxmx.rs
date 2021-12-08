@@ -5,14 +5,15 @@ use memofs::Vfs;
 
 use crate::snapshot::{InstanceContext, InstanceMetadata, InstanceSnapshot};
 
-use super::middleware::SnapshotInstanceResult;
+use super::util::PathExt;
 
 pub fn snapshot_rbxmx(
     context: &InstanceContext,
     vfs: &Vfs,
     path: &Path,
-    instance_name: &str,
-) -> SnapshotInstanceResult {
+) -> anyhow::Result<Option<InstanceSnapshot>> {
+    let name = path.file_name_trim_end(".rbxmx")?;
+
     let options = rbx_xml::DecodeOptions::new()
         .property_behavior(rbx_xml::DecodePropertyBehavior::ReadUnknown);
 
@@ -24,7 +25,7 @@ pub fn snapshot_rbxmx(
 
     if children.len() == 1 {
         let snapshot = InstanceSnapshot::from_tree(&temp_tree, children[0])
-            .name(instance_name)
+            .name(name)
             .metadata(
                 InstanceMetadata::new()
                     .instigating_source(path)
@@ -35,7 +36,7 @@ pub fn snapshot_rbxmx(
         Ok(Some(snapshot))
     } else {
         anyhow::bail!(
-            "Rojo doesn't have support for model files with zero or more than one top-level instances yet.\n\n \
+            "Rojo currently only supports model files with one top-level instance.\n\n \
              Check the model file at path {}",
             path.display()
         );
@@ -73,7 +74,6 @@ mod test {
             &InstanceContext::default(),
             &mut vfs,
             Path::new("/foo.rbxmx"),
-            "foo",
         )
         .unwrap()
         .unwrap();

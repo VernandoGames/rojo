@@ -1,5 +1,7 @@
 //! Defines the semantics that Rojo uses to turn entries on the filesystem into
 //! Roblox instances using the instance snapshot subsystem.
+//!
+//! These modules define how files turn into instances.
 
 #![allow(dead_code)]
 
@@ -9,7 +11,6 @@ mod json;
 mod json_model;
 mod lua;
 mod meta_file;
-mod middleware;
 mod project;
 mod rbxm;
 mod rbxmx;
@@ -20,7 +21,7 @@ use std::path::Path;
 
 use memofs::{IoResultExt, Vfs};
 
-use crate::snapshot::InstanceContext;
+use crate::snapshot::{InstanceContext, InstanceSnapshot};
 
 use self::{
     csv::snapshot_csv,
@@ -28,21 +29,22 @@ use self::{
     json::snapshot_json,
     json_model::snapshot_json_model,
     lua::{snapshot_lua, snapshot_lua_init},
-    middleware::SnapshotInstanceResult,
     project::snapshot_project,
     rbxm::snapshot_rbxm,
     rbxmx::snapshot_rbxmx,
     txt::snapshot_txt,
-    util::match_file_name,
+    util::PathExt,
 };
 
 pub use self::project::snapshot_project_node;
 
+/// The main entrypoint to the snapshot function. This function can be pointed
+/// at any path and will return something if Rojo knows how to deal with it.
 pub fn snapshot_from_vfs(
     context: &InstanceContext,
     vfs: &Vfs,
     path: &Path,
-) -> SnapshotInstanceResult {
+) -> anyhow::Result<Option<InstanceSnapshot>> {
     let meta = match vfs.metadata(path).with_not_found()? {
         Some(meta) => meta,
         None => return Ok(None),
@@ -71,7 +73,7 @@ pub fn snapshot_from_vfs(
 
         snapshot_dir(context, vfs, path)
     } else {
-        if let Some(name) = match_file_name(path, ".lua") {
+        if let Ok(name) = path.file_name_trim_end(".lua") {
             match name {
                 // init scripts are handled elsewhere and should not turn into
                 // their own children.
@@ -79,23 +81,23 @@ pub fn snapshot_from_vfs(
 
                 _ => return snapshot_lua(context, vfs, path),
             }
-        } else if let Some(_name) = match_file_name(path, ".project.json") {
+        } else if path.file_name_ends_with(".project.json") {
             return snapshot_project(context, vfs, path);
-        } else if let Some(name) = match_file_name(path, ".model.json") {
-            return snapshot_json_model(context, vfs, path, name);
-        } else if let Some(_name) = match_file_name(path, ".meta.json") {
+        } else if path.file_name_ends_with(".model.json") {
+            return snapshot_json_model(context, vfs, path);
+        } else if path.file_name_ends_with(".meta.json") {
             // .meta.json files do not turn into their own instances.
             return Ok(None);
-        } else if let Some(name) = match_file_name(path, ".json") {
-            return snapshot_json(context, vfs, path, name);
-        } else if let Some(name) = match_file_name(path, ".csv") {
-            return snapshot_csv(context, vfs, path, name);
-        } else if let Some(name) = match_file_name(path, ".txt") {
-            return snapshot_txt(context, vfs, path, name);
-        } else if let Some(name) = match_file_name(path, ".rbxmx") {
-            return snapshot_rbxmx(context, vfs, path, name);
-        } else if let Some(name) = match_file_name(path, ".rbxm") {
-            return snapshot_rbxm(context, vfs, path, name);
+        } else if path.file_name_ends_with(".json") {
+            return snapshot_json(context, vfs, path);
+        } else if path.file_name_ends_with(".csv") {
+            return snapshot_csv(context, vfs, path);
+        } else if path.file_name_ends_with(".txt") {
+            return snapshot_txt(context, vfs, path);
+        } else if path.file_name_ends_with(".rbxmx") {
+            return snapshot_rbxmx(context, vfs, path);
+        } else if path.file_name_ends_with(".rbxm") {
+            return snapshot_rbxm(context, vfs, path);
         }
 
         Ok(None)

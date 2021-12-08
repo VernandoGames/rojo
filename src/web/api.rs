@@ -10,15 +10,17 @@ use hyper::{service::Service, Body, Method, Request, StatusCode};
 use rbx_dom_weak::{types::Ref, InstanceBuilder, WeakDom};
 use roblox_install::RobloxStudio;
 use uuid::Uuid;
+use hyper::{body, Body, Method, Request, Response, StatusCode};
+use rbx_dom_weak::types::Ref;
 
 use crate::{
     serve_session::ServeSession,
     snapshot::{InstanceWithMeta, PatchSet, PatchUpdate},
     web::{
         interface::{
-            ErrorResponse, Instance, InstanceMetadata as WebInstanceMetadata, InstanceUpdate,
-            OpenResponse, ReadResponse, ServerInfoResponse, SubscribeMessage, SubscribeResponse,
-            WriteRequest, WriteResponse, PROTOCOL_VERSION, SERVER_VERSION,
+            ErrorResponse, Instance, OpenResponse, ReadResponse, ServerInfoResponse,
+            SubscribeMessage, SubscribeResponse, WriteRequest, WriteResponse, PROTOCOL_VERSION,
+            SERVER_VERSION,
         },
         util::{json, json_ok},
     },
@@ -30,34 +32,33 @@ const CREATE_ASSETS_DIR: &str = "rojo-exports";
 pub struct ApiService {
     serve_session: Arc<ServeSession>,
 }
+pub async fn call(serve_session: Arc<ServeSession>, request: Request<Body>) -> Response<Body> {
+    let service = ApiService::new(serve_session);
 
-impl Service for ApiService {
-    type ReqBody = Body;
-    type ResBody = Body;
-    type Error = hyper::Error;
-    type Future =
-        Box<dyn Future<Item = hyper::Response<Self::ReqBody>, Error = Self::Error> + Send>;
-
-    fn call(&mut self, request: hyper::Request<Self::ReqBody>) -> Self::Future {
-        match (request.method(), request.uri().path()) {
-            (&Method::GET, "/api/rojo") => self.handle_api_rojo(),
-            (&Method::GET, path) if path.starts_with("/api/read/") => self.handle_api_read(request),
-            (&Method::GET, path) if path.starts_with("/api/subscribe/") => {
-                self.handle_api_subscribe(request)
-            }
-            (&Method::POST, path) if path.starts_with("/api/open/") => {
-                self.handle_api_open(request)
-            }
+    match (request.method(), request.uri().path()) {
+        (&Method::GET, "/api/rojo") => service.handle_api_rojo().await,
+        (&Method::GET, path) if path.starts_with("/api/read/") => {
+            service.handle_api_read(request).await
+        }
+        (&Method::GET, path) if path.starts_with("/api/subscribe/") => {
+            service.handle_api_subscribe(request).await
+        }
+        (&Method::POST, path) if path.starts_with("/api/open/") => {
+            service.handle_api_open(request).await
+        }
 
             (&Method::POST, "/api/write") => self.handle_api_write(request),
             (&Method::POST, "/api/create-assets") => self.handle_api_create_assets(request),
 
-            (_method, path) => json(
-                ErrorResponse::not_found(format!("Route not found: {}", path)),
-                StatusCode::NOT_FOUND,
-            ),
-        }
+        (_method, path) => json(
+            ErrorResponse::not_found(format!("Route not found: {}", path)),
+            StatusCode::NOT_FOUND,
+        ),
     }
+}
+
+pub struct ApiService {
+    serve_session: Arc<ServeSession>,
 }
 
 impl ApiService {
@@ -66,7 +67,7 @@ impl ApiService {
     }
 
     /// Get a summary of information about the server
-    fn handle_api_rojo(&self) -> <Self as Service>::Future {
+    async fn handle_api_rojo(&self) -> Response<Body> {
         let tree = self.serve_session.tree();
         let root_instance_id = tree.get_root_id();
 
@@ -76,13 +77,15 @@ impl ApiService {
             session_id: self.serve_session.session_id(),
             project_name: self.serve_session.project_name().to_owned(),
             expected_place_ids: self.serve_session.serve_place_ids().cloned(),
+            place_id: self.serve_session.place_id(),
+            game_id: self.serve_session.game_id(),
             root_instance_id,
         })
     }
 
     /// Retrieve any messages past the given cursor index, and if
     /// there weren't any, subscribe to receive any new messages.
-    fn handle_api_subscribe(&self, request: Request<Body>) -> <Self as Service>::Future {
+    async fn handle_api_subscribe(&self, request: Request<Body>) -> Response<Body> {
         let argument = &request.uri().path()["/api/subscribe/".len()..];
         let input_cursor: u32 = match argument.parse() {
             Ok(v) => v,
@@ -96,54 +99,21 @@ impl ApiService {
 
         let session_id = self.serve_session.session_id();
 
-        let receiver = self.serve_session.message_queue().subscribe(input_cursor);
+        let result = self
+            .serve_session
+            .message_queue()
+            .subscribe(input_cursor)
+            .await;
 
         let tree_handle = self.serve_session.tree_handle();
 
-        Box::new(receiver.then(move |result| match result {
+        match result {
             Ok((message_cursor, messages)) => {
                 let tree = tree_handle.lock().unwrap();
 
                 let api_messages = messages
                     .into_iter()
-                    .map(|message| {
-                        let removed = message.removed;
-
-                        let mut added = HashMap::new();
-                        for id in message.added {
-                            let instance = tree.get_instance(id).unwrap();
-                            added.insert(id, Instance::from_rojo_instance(instance));
-
-                            for instance in tree.descendants(id) {
-                                added.insert(instance.id(), Instance::from_rojo_instance(instance));
-                            }
-                        }
-
-                        let updated = message
-                            .updated
-                            .into_iter()
-                            .map(|update| {
-                                let changed_metadata = update
-                                    .changed_metadata
-                                    .as_ref()
-                                    .map(WebInstanceMetadata::from_rojo_metadata);
-
-                                InstanceUpdate {
-                                    id: update.id,
-                                    changed_name: update.changed_name,
-                                    changed_class_name: update.changed_class_name,
-                                    changed_properties: update.changed_properties,
-                                    changed_metadata,
-                                }
-                            })
-                            .collect();
-
-                        SubscribeMessage {
-                            removed,
-                            added,
-                            updated,
-                        }
-                    })
+                    .map(|patch| SubscribeMessage::from_patch_update(&tree, patch))
                     .collect();
 
                 json_ok(SubscribeResponse {
@@ -156,56 +126,56 @@ impl ApiService {
                 ErrorResponse::internal_error("Message queue disconnected sender"),
                 StatusCode::INTERNAL_SERVER_ERROR,
             ),
-        }))
+        }
     }
 
-    fn handle_api_write(&self, request: Request<Body>) -> <Self as Service>::Future {
+    async fn handle_api_write(&self, request: Request<Body>) -> Response<Body> {
         let session_id = self.serve_session.session_id();
         let tree_mutation_sender = self.serve_session.tree_mutation_sender();
 
-        Box::new(request.into_body().concat2().and_then(move |body| {
-            let request: WriteRequest = match serde_json::from_slice(&body) {
-                Ok(request) => request,
-                Err(err) => {
-                    return json(
-                        ErrorResponse::bad_request(format!("Invalid body: {}", err)),
-                        StatusCode::BAD_REQUEST,
-                    );
-                }
-            };
+        let body = body::to_bytes(request.into_body()).await.unwrap();
 
-            if request.session_id != session_id {
+        let request: WriteRequest = match serde_json::from_slice(&body) {
+            Ok(request) => request,
+            Err(err) => {
                 return json(
-                    ErrorResponse::bad_request("Wrong session ID"),
+                    ErrorResponse::bad_request(format!("Invalid body: {}", err)),
                     StatusCode::BAD_REQUEST,
                 );
             }
+        };
 
-            let updated_instances = request
-                .updated
-                .into_iter()
-                .map(|update| PatchUpdate {
-                    id: update.id,
-                    changed_class_name: update.changed_class_name,
-                    changed_name: update.changed_name,
-                    changed_properties: update.changed_properties,
-                    changed_metadata: None,
-                })
-                .collect();
+        if request.session_id != session_id {
+            return json(
+                ErrorResponse::bad_request("Wrong session ID"),
+                StatusCode::BAD_REQUEST,
+            );
+        }
 
-            tree_mutation_sender
-                .send(PatchSet {
-                    removed_instances: Vec::new(),
-                    added_instances: Vec::new(),
-                    updated_instances,
-                })
-                .unwrap();
+        let updated_instances = request
+            .updated
+            .into_iter()
+            .map(|update| PatchUpdate {
+                id: update.id,
+                changed_class_name: update.changed_class_name,
+                changed_name: update.changed_name,
+                changed_properties: update.changed_properties,
+                changed_metadata: None,
+            })
+            .collect();
 
-            json_ok(&WriteResponse { session_id })
-        }))
+        tree_mutation_sender
+            .send(PatchSet {
+                removed_instances: Vec::new(),
+                added_instances: Vec::new(),
+                updated_instances,
+            })
+            .unwrap();
+
+        json_ok(&WriteResponse { session_id })
     }
 
-    fn handle_api_read(&self, request: Request<Body>) -> <Self as Service>::Future {
+    async fn handle_api_read(&self, request: Request<Body>) -> Response<Body> {
         let argument = &request.uri().path()["/api/read/".len()..];
         let requested_ids: Result<Vec<Ref>, _> = argument.split(',').map(Ref::from_str).collect();
 
@@ -244,7 +214,7 @@ impl ApiService {
     }
 
     /// Open a script with the given ID in the user's default text editor.
-    fn handle_api_open(&self, request: Request<Body>) -> <Self as Service>::Future {
+    async fn handle_api_open(&self, request: Request<Body>) -> Response<Body> {
         let argument = &request.uri().path()["/api/open/".len()..];
         let requested_id = match Ref::from_str(argument) {
             Ok(id) => id,

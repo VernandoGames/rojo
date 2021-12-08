@@ -1,9 +1,12 @@
-//! Defines the HTTP-based UI. These endpoints generally return HTML and SVG.
+//! Defines the HTTP-based Rojo UI. It uses ritz for templating, which is like
+//! JSX for Rust. Eventually we should probably replace this with a new
+//! framework, maybe using JS and client side rendering.
+//!
+//! These endpoints generally return HTML and SVG.
 
 use std::{borrow::Cow, sync::Arc, time::Duration};
 
-use futures::{future, Future};
-use hyper::{header, service::Service, Body, Method, Request, Response, StatusCode};
+use hyper::{header, Body, Method, Request, Response, StatusCode};
 use maplit::hashmap;
 use rbx_dom_weak::types::{Ref, Variant};
 use ritz::{html, Fragment, HtmlContent, HtmlSelfClosingTag};
@@ -18,32 +21,23 @@ use crate::{
     },
 };
 
-pub struct UiService {
-    serve_session: Arc<ServeSession>,
+pub async fn call(serve_session: Arc<ServeSession>, request: Request<Body>) -> Response<Body> {
+    let service = UiService::new(serve_session);
+
+    match (request.method(), request.uri().path()) {
+        (&Method::GET, "/") => service.handle_home(),
+        (&Method::GET, "/logo.png") => service.handle_logo(),
+        (&Method::GET, "/icon.png") => service.handle_icon(),
+        (&Method::GET, "/show-instances") => service.handle_show_instances(),
+        (_method, path) => json(
+            ErrorResponse::not_found(format!("Route not found: {}", path)),
+            StatusCode::NOT_FOUND,
+        ),
+    }
 }
 
-impl Service for UiService {
-    type ReqBody = Body;
-    type ResBody = Body;
-    type Error = hyper::Error;
-    type Future = Box<dyn Future<Item = Response<Self::ReqBody>, Error = Self::Error> + Send>;
-
-    fn call(&mut self, request: Request<Self::ReqBody>) -> Self::Future {
-        let response = match (request.method(), request.uri().path()) {
-            (&Method::GET, "/") => self.handle_home(),
-            (&Method::GET, "/logo.png") => self.handle_logo(),
-            (&Method::GET, "/icon.png") => self.handle_icon(),
-            (&Method::GET, "/show-instances") => self.handle_show_instances(),
-            (_method, path) => {
-                return json(
-                    ErrorResponse::not_found(format!("Route not found: {}", path)),
-                    StatusCode::NOT_FOUND,
-                )
-            }
-        };
-
-        Box::new(future::ok(response))
-    }
+pub struct UiService {
+    serve_session: Arc<ServeSession>,
 }
 
 impl UiService {
