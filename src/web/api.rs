@@ -382,11 +382,13 @@ impl ApiService {
                     })),
             );
 
-            // XML is used instead of binary, as invalid XML files error,
-            // while invalid binary files completely crash Studio.
-            if let Err(error) =
-				rbx_binary::to_writer_default(&mut writer, &export_tree, export_tree.root().children())
-            {
+            // Binary is required here as the rbx_xml writer appears
+			// to have some issue which messes with mesh sizing.
+            if let Err(error) = rbx_binary::to_writer_default(
+                &mut writer,
+                &export_tree,
+                export_tree.root().children(),
+            ) {
                 return json(
                     ErrorResponse::bad_request(format!("Couldn't write DOM to file: {}", error)),
                     StatusCode::INTERNAL_SERVER_ERROR,
