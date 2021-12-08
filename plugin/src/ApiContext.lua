@@ -217,20 +217,58 @@ function ApiContext:retrieveMessages()
 			end)
 	end
 
-	return sendRequest()
-		:andThen(rejectFailedRequests)
-		:andThen(Http.Response.json)
-		:andThen(function(body)
-			if body.sessionId ~= self.__sessionId then
-				return Promise.reject("Server changed ID")
-			end
+	-- This looks extremely messy, and it honestly is, but this is the only way I could get it to
+	-- 100% reliably sync with GetObjects(). It seems to be some weird case where
+	-- studio will not recognize the file is even there unless you first
+	-- write it, attempt to import (fail), write it again, and then successfully import it.
+	-- This has not yet failed and the prior method rarely worked in my testing.
+	return Promise.new(function(resolve, reject)
+		sendRequest()
+			:andThen(rejectFailedRequests)
+			:andThen(Http.Response.json)
+			:andThen(function(body)
+				pcall(function()
+					for _,v in next, game:GetObjects(body.messages) do
+						v:Destroy()
+					end
+				end)
+			end)
+			:andThen(function()
+				resolve(
+					sendRequest()
+						:andThen(rejectFailedRequests)
+						:andThen(Http.Response.json)
+						:andThen(function(body)
+							if body.sessionId ~= self.__sessionId then
+								return Promise.reject("Server changed ID")
+							end
 
-			assert(validateApiSubscribe(body))
+							assert(validateApiSubscribe(body))
 
-			self:setMessageCursor(body.messageCursor)
+							self:setMessageCursor(body.messageCursor)
 
-			return body.messages
-		end)
+							return body.messages
+						end)
+						:catch(reject)
+						:expect()
+					)
+			end)
+			:catch(reject)
+	end)
+	-- return sendRequest()
+	-- 	:andThen(rejectFailedRequests)
+	-- 	:andThen(Http.Response.json)
+	-- 	:andThen(function(body)
+	-- 		if body.sessionId ~= self.__sessionId then
+	-- 			return Promise.reject("Server changed ID")
+	-- 		end
+
+	-- 		assert(validateApiSubscribe(body))
+
+	-- 		self:setMessageCursor(body.messageCursor)
+
+	-- 		return body.messages
+	-- 	end)
 end
 
 function ApiContext:open(id)
