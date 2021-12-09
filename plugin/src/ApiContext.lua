@@ -255,20 +255,6 @@ function ApiContext:retrieveMessages()
 			end)
 			:catch(reject)
 	end)
-	-- return sendRequest()
-	-- 	:andThen(rejectFailedRequests)
-	-- 	:andThen(Http.Response.json)
-	-- 	:andThen(function(body)
-	-- 		if body.sessionId ~= self.__sessionId then
-	-- 			return Promise.reject("Server changed ID")
-	-- 		end
-
-	-- 		assert(validateApiSubscribe(body))
-
-	-- 		self:setMessageCursor(body.messageCursor)
-
-	-- 		return body.messages
-	-- 	end)
 end
 
 function ApiContext:open(id)
