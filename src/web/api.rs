@@ -294,6 +294,14 @@ impl ApiService {
             .join(CREATE_ASSETS_DIR)
             .join(&model_path);
 
+        // remove all assets in the assets_dir
+        if let Err(error) =
+            remove_dir_contents(&packed_path.parent().expect("no parent for packed_path"))
+        {
+            // don't error, just make a note of this.
+            log::debug!("Was unable to remove old assets: {}", error);
+        }
+
         if let Err(error) =
             fs::create_dir_all(&packed_path.parent().expect("no parent for packed_path"))
         {
@@ -351,6 +359,13 @@ impl ApiService {
             url: format!("rbxasset://{}/{}", CREATE_ASSETS_DIR, model_path),
         })
     }
+}
+
+fn remove_dir_contents<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<()> {
+    for entry in fs::read_dir(path)? {
+        fs::remove_file(entry?.path())?;
+    }
+    Ok(())
 }
 
 /// If this instance is represented by a script, try to find the correct .lua
