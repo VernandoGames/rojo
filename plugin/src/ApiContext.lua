@@ -227,6 +227,7 @@ function ApiContext:retrieveMessages()
 			:andThen(rejectFailedRequests)
 			:andThen(Http.Response.json)
 			:andThen(function(body)
+				-- first import, failure is expected.
 				pcall(function()
 					for _,v in next, game:GetObjects(body.messages) do
 						v:Destroy()
